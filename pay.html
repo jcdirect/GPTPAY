@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="shortcut icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css" />
+  <link href="{{url_for('static',filename='css/main.css')}}" rel="stylesheet">
+  <title>Pay for SparkGPT with Bitcoin Lightning</title>
+</head>
+<body class="bg-black text-white flex flex-col items-center justify-center min-h-screen">
+  
+  <header class="p-4 bg-black w-full flex justify-between items-center">
+    
+    <button></button>
+    <h1 id="not" class="text-lg md:text-xl text-center">Pay with Bitcoin over the Lightning Network!</h1>
+    <div id="num_of_sats" class="mt-4 text-lg text-white hidden relative -top-64"></div>
+    <div></div> <!-- Spacer -->
+  </header>
+  {% if info %}
+  <h4 id="info" class="text-md text-red-500">{{ info }}</h4>
+  {% endif %}
+  <form id="invoice-form" class="flex flex-col items-center mt-4">
+    Sats: <input type="text" id="sats" name="sats" placeholder="Enter an Amount of Sats..." pattern="[0-9]*" inputmode="numeric" value=1000 title="Please enter a valid number!" required class="appearance-none relative block w-64 px-3 py-2 border border-gray-300 placeholder-gray-500 text-white rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 focus:z-10 sm:text-sm bg-gray-800 mt-2">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" id="generate-button" class="group relative w-64 flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 mt-4">Generate Invoice</button>
+    <div id="spinner" class="hidden">
+      <i class="text-lg fas fa-spinner fa-spin"></i>
+    </div>
+  </form>
+  <div id="checkmark" class="mt-4"></div>
+  
+  <div id="payment-message" class="mt-4 text-lg text-red-500"></div>
+  <div id="qr-code" class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white hidden"></div>
+  <div></div>
+  
+  <script>
+    const invoiceForm = document.querySelector("#invoice-form");
+    const generateButton = document.querySelector("#generate-button");
+    const qrCodeDiv = document.querySelector("#qr-code");
+    const satsInput = document.querySelector("#sats");
+    const numOfSats = document.querySelector("#num_of_sats");
+    const link = document.createElement("a");
+    const not = document.querySelector("#not");
+    const info = document.querySelector("#info");
+    let satNum = 0;
+
+invoiceForm.addEventListener("submit", (event) => {
+    event.preventDefault(); 
+    const sats = satsInput.value;
+
+    document.getElementById('spinner').classList.remove('hidden');
+
+    fetch(`/get_invoice?sats=${sats}`)
+        .then(response => {
+            if (response.ok) {
+              satNum = sats;
+              satsInput.value = "";
+              qrCodeDiv.innerHTML = "";
+              return response.json();
+            } else {
+                throw new Error("Failed to generate invoice");
+            }
+        })
+        .then(data => {
+            qrCodeDiv.innerHTML = "";
+            const image = document.createElement("img");
+          //console.log(data.payment_request);
+            fetch(`/qrcode_gen?payment_request=${encodeURIComponent(data.payment_request)}`)
+                .then(response => response.text())
+                .then(qrCodeImagePath => {
+                    image.width = 500;
+                    not.classList.add("hidden");
+                    info.classList.add("hidden");
+                    invoiceForm.classList.add("hidden");
+                    generateButton.classList.add("hidden");
+                    image.src = qrCodeImagePath;
+                    numOfSats.classList.remove("hidden");
+                    numOfSats.innerHTML = "Invoice for " + sats + " Sats";
+                    
+                    link.href = "lightning:" + data.payment_request;
+                    link.appendChild(image);
+                    qrCodeDiv.appendChild(link);
+                    qrCodeDiv.classList.remove("hidden");
+                    startPolling();
+                })
+                .catch(error => console.error(error));
+        })
+        .catch(error => console.error(error));
+});
+
+generateButton.addEventListener("click", () => {
+    qrCodeDiv.innerHTML = "";
+});
+          function startPolling() {
+            const source = new EventSource("/payment_updates");
+            const target = document.querySelector("#checkmark");
+            source.addEventListener("message", (event) => {
+                const messageDiv = document.querySelector("#payment-message");
+              let data = JSON.parse(event.data);
+              console.log(data);
+                if (data.status === 'not paid') {
+                    messageDiv.textContent = "";
+                } else {
+                  messageDiv.textContent = "Invoice for " + satNum + " sats has been paid!";
+                  qrCodeDiv.classList.add("hidden");
+                  numOfSats.classList.add("hidden");
+                  const icon = document.createElement("i");
+                  icon.classList.add("fas", "fa-check-circle");
+                  icon.style.fontSize = "10em";
+                  icon.style.color = "green";
+                  target.appendChild(icon);
+                  qrCodeDiv.innerHTML = "";
+                  source.close();
+                  setTimeout(() => window.location.href = "/chat", 5000);
+                }
+            });
+        }
+    </script>
+</html>
